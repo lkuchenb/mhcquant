@@ -18,19 +18,20 @@ def helpMessage() {
 
     The typical command for running the pipeline is as follows:
 
-    nextflow run nf-core/mhcquant --sample_sheet 'sample_sheet.tsv' --fasta 'SWISSPROT_2020.fasta'  --allele_sheet 'alleles.tsv'  --predict_class_1  --refine_fdr_on_predicted_subset -profile standard,docker
+    nextflow run nf-core/mhcquant --sample_sheet 'sample_sheet.tsv' --protref 'SWISSPROT_2020.fasta'  --allele_sheet 'alleles.tsv'  --predict_class_1  --refine_fdr_on_predicted_subset -profile standard,docker
 
     Mandatory arguments:
-      --sample_sheet [file]                     Path to sample sheet (must be surrounded with quotes)
-      --raw_input [bool]                        Specify whether raw files are used as input
-      --mzml_input [bool]                       Specify whether mzml files are used as input
-      --fasta [file]                            Path to Fasta reference
+      --sample_sheet [file]                     Path to sample sheet
+      --protref [file]                          Path to protein reference file in FASTA format
       -profile [str]                            Configuration profile to use. Can use multiple (comma separated)
                                                 Available: docker, singularity, test, awsbatch and more
+    Input:
+      --from_mzml [bool]                        Input files are mzml files and not raw files
+
     Mass Spectrometry Search:
       --peptide_min_length [int]                Minimum peptide length for filtering
       --peptide_max_length [int]                Maximum peptide length for filtering
-      --precursor_mass_tolerance [int           Mass tolerance of precursor mass (ppm)
+      --precursor_mass_tolerance [int]          Mass tolerance of precursor mass (ppm)
       --fragment_mass_tolerance [int]           Mass tolerance of fragment mass bin (ppm)
       --fragment_bin_offset [int]               Offset of fragment mass bin (Comet specific parameter)
       --use_x_ions [bool]                       Use x ions for spectral matching in addition
@@ -46,7 +47,7 @@ def helpMessage() {
       --fixed_mods [str]                        Fixed modifications ('Carbamidomethyl (C)', see OpenMS modifications)
       --variable_mods [str]                     Variable modifications ('Oxidation (M)', see OpenMS modifications)
       --num_hits [int]                          Number of reported hits
-      --run_centroidisation [bool]              Specify whether mzml data is peak picked or not (true, false)
+      --run_centroidisation [bool]              Specify whether mzml data is peak picked or not
       --pick_ms_levels [int]                    The ms level used for peak picking (eg. 1, 2)
       --prec_charge [str]                       Precursor charge (eg. "2:3")
       --max_rt_alignment_shift [int]            Maximal retention time shift (sec) resulting from linear alignment      
@@ -56,18 +57,18 @@ def helpMessage() {
       --predict_RT [bool]                       Retention time prediction for identified peptides
       --skip_decoy_generation [bool]            Use a fasta database that already includes decoy sequences
       --quantification_fdr [bool]               Assess and assign ids matched between runs with an additional quantification FDR
-      --quantification_min_prob  [int]          Specify a minimum probability cut off for quantification
+      --quantification_min_prob [int]           Specify a minimum probability cut off for quantification
 
     Binding Predictions:	
       --allele_sheet [file]                     Path to file including Sample wise HLA class 1 and class 2 allele information 
       --predict_class_1 [bool]                  Whether a class 1 affinity prediction using MHCFlurry should be run on the results - check if alleles are supported (true, false)	
       --predict_class_2 [bool]                  Whether a class 2 affinity prediction using MHCNuggets should be run on the results - check if alleles are supported (true, false) 	
-      --refine_fdr_on_predicted_subset[bool]    Whether affinity predictions using MHCFlurry should be used to subset PSMs and refine the FDR (true, false)	
+      --refine_fdr_on_predicted_subset [bool]   Whether affinity predictions using MHCFlurry should be used to subset PSMs and refine the FDR (true, false)	
       --subset_affinity_threshold [int]         Predicted affinity threshold (nM) which will be applied to subset PSMs in FDR refinement. (eg. 500)	
 
     Variants:
-      --vcf_sheet [file]                        Path to file including Sample wise vcf information 
       --include_proteins_from_vcf [bool]        Whether to use a provided vcf file to generate proteins and include them in the database search (true, false)	
+      --vcf_sheet [file]                        Path to file including Sample wise vcf information 
       --variant_annotation_style [str]          Specify which software style was used to carry out the variant annotation in the vcf ("SNPEFF","VEP","ANNOVAR")	
       --variant_reference [str]                 Specify reference genome used for variant annotation ("GRCH37","GRCH38")	
       --variant_indel_filter [bool]             Remove insertions and deletions from vcf (true, false)	
@@ -93,60 +94,83 @@ if (params.help) {
     exit 0
 }
 
-// Validate inputs
-//MS Input
-if (params.sample_sheet)  {
-   sample_sheet = file(params.sample_sheet)
-
-   Channel.from( sample_sheet )
-                .splitCsv(header: true, sep:'\t')
-                .map { col -> tuple("${col.ID}", "${col.Sample}", "${col.Condition}", file("${col.ReplicateFileName}", checkifExists: true))}
-                .flatMap{it -> [tuple(it[0],it[1].toString(),it[2],it[3])]}
-                .into { ch_samples_from_sheet; ch_samples_for_fasta}
-
+def equit(s) {
+    log.error(s)
+    exit 1
 }
 
-if(params.mzml_input){
-      ch_samples = ch_samples_from_sheet ?: { log.error "No sample sheet provided. Make sure you have used the '--sample_sheet' option."; exit 1 }()
+// # Validate Inputs ##################################################################################
 
+// Mandatory arguments
+if (!params.sample_sheet || params.sample_sheet instanceof Boolean ) equit("No sample sheet provided. Make sure you have used the '--sample_sheet' option.")
+if (!params.protref || params.protref instanceof Boolean ) equit("No protein reference file provided. Make sure you have used the '--protref' option.")
 
+// Boolean arguments
+if (!(params.from_mzml instanceof Boolean)) equit("--from_mzml is a boolean argument")
+if (!(params.use_x_ions instanceof Boolean)) equit("--use_x_ions is a boolean argument")
+if (!(params.use_z_ions instanceof Boolean)) equit("--use_z_ions is a boolean argument")
+if (!(params.use_a_ions instanceof Boolean)) equit("--use_a_ions is a boolean argument")
+if (!(params.use_c_ions instanceof Boolean)) equit("--use_c_ions is a boolean argument")
+if (!(params.run_centroidisation instanceof Boolean)) equit("--run_centroidisation is a boolean argument")
+if (!(params.klammer instanceof Boolean)) equit("--klammer is a boolean argument")
+if (!(params.predict_RT instanceof Boolean)) equit("--predict_RT is a boolean argument")
+if (!(params.skip_decoy_generation instanceof Boolean)) equit("--skip_decoy_generation is a boolean argument")
+if (!(params.quantification_fdr instanceof Boolean)) equit("--quantification_fdr is a boolean argument")
+if (!(params.predict_class_1 instanceof Boolean)) equit("--predict_class_1 is a boolean argument")
+if (!(params.predict_class_2 instanceof Boolean)) equit("--predict_class_2 is a boolean argument")
+if (!(params.refine_fdr_on_predicted_subset instanceof Boolean)) equit("--refine_fdr_on_predicted_subset is a boolean argument")
+if (!(params.include_proteins_from_vcf instanceof Boolean)) equit("--include_proteins_from_vcf is a boolean argument")
+if (!(params.variant_indel_filter instanceof Boolean)) equit("--variant_indel_filter is a boolean argument")
+if (!(params.variant_frameshift_filter instanceof Boolean)) equit("--variant_frameshift_filter is a boolean argument")
+if (!(params.variant_snp_filter instanceof Boolean)) equit("--variant_snp_filter is a boolean argument")
+
+// # Channels #########################################################################################
+
+sample_sheet = file(params.sample_sheet)
+
+// Read TSV sample sheet
+Channel.from( sample_sheet )
+        .splitCsv(header: true, sep:'\t')
+        .map { col -> tuple(col.ID, col.Sample, col.Condition, col.ReplicateFileName) }
+        .into { ch_samples_from_sheet; ch_n_reps }
+
+// Prepare sample channels
+ch_samples_from_sheet.map { id, sample, cond, fname -> tuple("${id}", "${sample}", "${cond}", file("${fname}", checkifExists: true))}
+            .map{it -> tuple(it[0],it[1].toString(),it[2],it[3])}
+            .into { ch_samples_from_sheet; ch_samples_for_fasta}
+
+// Count number of replicates per sample
+ch_n_reps.groupTuple(by:1)
+    .map { ids, sample, conditions, fnames -> tuple(ids.size(), sample) }
+    .set{ch_n_reps}
+
+ch_samples = ch_samples_from_sheet
+
+if(params.from_mzml) {
       if (params.run_centroidisation) {
-
          ch_samples
             .set { input_mzmls_unpicked }
 
          Channel.empty()
             .into{input_mzmls; input_mzmls_d; input_mzmls_align}
-
       } else {
-
          ch_samples
             .into { input_mzmls; input_mzmls_d; input_mzmls_align }
 
          Channel.empty()
             .into{input_mzmls_unpicked; input_mzmls_align_unpicked}
       }  
-
       Channel.empty()
         .into{input_raws;input_raws_d}
-
 } else {
-   if (params.raw_input){
-      ch_samples = ch_samples_from_sheet ?: { log.error "No sample sheet provided. Make sure you have used the '--sample_sheet' option."; exit 1 }()
+		ch_samples
+		.into { input_raws; input_raws_d }
 
-      ch_samples
-           .into { input_raws; input_raws_d }
-
-      Channel.empty()
-        .into{input_mzmls; input_mzmls_d; input_mzmls_align; input_mzmls_unpicked; input_mzmls_align_unpicked}
-
-   }
+	Channel.empty()
+		.into{input_mzmls; input_mzmls_d; input_mzmls_align; input_mzmls_unpicked; input_mzmls_align_unpicked}
 }
 
-
-params.fasta = params.fasta ?: { log.error "No database fasta privided. Make sure you have used the '--fasta' option."; exit 1 }()
 params.outdir = params.outdir ?: { log.warn "No output directory provided. Will put the results into './results'"; return "./results" }()
-
 
 //Allele Input
 if (params.predict_class_1 || params.predict_class_2)  {
@@ -158,7 +182,6 @@ if (params.predict_class_1 || params.predict_class_2)  {
                 .into { ch_alleles_from_sheet; ch_alleles_from_sheet_II}
 }
 
-
 //Variant Input
 if (params.include_proteins_from_vcf)  {
    vcf_sheet = file(params.vcf_sheet, checkIfExists: true)
@@ -169,100 +192,55 @@ if (params.include_proteins_from_vcf)  {
                 .set {ch_vcf_from_sheet}
 }
 
-
-/*
- * SET UP CONFIGURATION VARIABLES
- */
+// # Parameter Preprocessing ##########################################################################
 
 //MS params
-params.peptide_min_length = 8
-params.peptide_max_length = 12
-params.fragment_mass_tolerance = 0.02
-params.precursor_mass_tolerance = 5
-params.use_x_ions = false
 x_ions = params.use_x_ions ? '-use_X_ions true' : ''
-params.use_z_ions = false
 z_ions = params.use_z_ions ? '-use_Z_ions true' : ''
-params.use_a_ions = false
 a_ions = params.use_a_ions ? '-use_A_ions true' : ''
-params.use_c_ions = false
 c_ions = params.use_c_ions ? '-use_C_ions true' : ''
-params.fragment_bin_offset = 0
-params.fdr_threshold = 0.01
-params.fdr_level = 'peptide-level-fdrs'
 fdr_level = (params.fdr_level == 'psm-level-fdrs') ? '' : '-'+params.fdr_level
-params.description_correct_features = 0
-params.klammer = false
-params.predict_RT = false
-params.number_mods = 3
 
-params.num_hits = 1
-params.digest_mass_range = "800:2500"
-params.pick_ms_levels = 2
-params.run_centroidisation = false
-
-params.prec_charge = '2:3'
-params.activation_method = 'ALL'
-
-params.enzyme = 'unspecific cleavage'
-params.fixed_mods = ''
-params.variable_mods = 'Oxidation (M)'
-params.spectrum_batch_size = 500
-
-params.skip_decoy_generation = false
 if (params.skip_decoy_generation) {
-log.warn "Be aware: skipping decoy generation will prevent generating variants and subset FDR refinement"
-log.warn "Decoys have to be named with DECOY_ as prefix in your fasta database"
+    log.warn "Be aware: skipping decoy generation will prevent generating variants and subset FDR refinement"
+    log.warn "Decoys have to be named with DECOY_ as prefix in your fasta database"
 }
 
-params.quantification_fdr = false
-params.quantification_min_prob = 0
 if (params.quantification_fdr) {
-   log.warn "Quantification FDR enabled"
+    log.warn "Quantification FDR enabled"
 }
 
-//prediction params
-params.predict_class_1 = false
-params.predict_class_2 = false
-params.refine_fdr_on_predicted_subset = false
+// Binding predictions
 if (params.skip_decoy_generation) {
-log.warn "Be aware: subset FDR refinement only considers MHC class I alleles supported by mhcflurry"
+    log.warn "Be aware: subset FDR refinement only considers MHC class I alleles supported by mhcflurry"
 }
-params.subset_affinity_threshold = 500
 
-//variant params
-params.inlude_proteins_from_vcf = false
-params.variant_annotation_style = "SNPEFF"
-params.variant_reference = "GRCH38"
-params.variant_indel_filter = false
+// Variants
 if (params.variant_indel_filter) {
-variant_indel_filter="-fINDEL"
+    variant_indel_filter="-fINDEL"
 } else {
-variant_indel_filter=""
+    variant_indel_filter=""
 }
-params.variant_frameshift_filter = false
+
 if (params.variant_frameshift_filter) {
-variant_frameshift_filter="-fFS"
+    variant_frameshift_filter="-fFS"
 } else {
-variant_frameshift_filter=""
+    variant_frameshift_filter=""
 }
-params.variant_snp_filter = false
+
 if (params.variant_snp_filter) {
-variant_snp_filter="-fSNP"
+    variant_snp_filter="-fSNP"
 } else {
-variant_snp_filter=""
+    variant_snp_filter=""
 }
 
 
-/*
- * Create a channel for input fasta file
- */
 if( params.include_proteins_from_vcf) {
     Channel
-        .fromPath( params.fasta )
+        .fromPath( params.protref )
         .spread(ch_samples_for_fasta)
         .flatMap{it -> [tuple(it[1],it[2],it[0])]}
-        .ifEmpty { exit 1, "params.fasta was empty - no input file supplied" }
+        .ifEmpty { exit 1, "params.protref was empty - no input file supplied" }
         .set { input_fasta_vcf }
 
     input_fasta = Channel.empty()
@@ -271,20 +249,20 @@ if( params.include_proteins_from_vcf) {
 
 } else if( params.skip_decoy_generation) {
     Channel
-        .fromPath( params.fasta )
+        .fromPath( params.protref )
         .spread(ch_samples_for_fasta)
         .flatMap{it -> [tuple(it[1],it[2],it[0])]}
-        .ifEmpty { exit 1, "params.fasta was empty - no input file supplied" }
+        .ifEmpty { exit 1, "params.protref was empty - no input file supplied" }
         .into { input_fasta; input_fasta_1; input_fasta_2 }
 
     input_fasta_vcf = Channel.empty()
 
 } else {
     Channel
-        .fromPath( params.fasta )
+        .fromPath( params.protref )
         .spread(ch_samples_for_fasta)
         .flatMap{it -> [tuple(it[1].toInteger(),it[2],it[0])]}
-        .ifEmpty { exit 1, "params.fasta was empty - no input file supplied" }
+        .ifEmpty { exit 1, "params.protref was empty - no input file supplied" }
         .set { input_fasta }
 
     input_fasta_vcf = Channel.empty()
@@ -346,7 +324,6 @@ if( params.include_proteins_from_vcf){
     input_vcf_neoepitope_II = Channel.empty()
 }
 
-
 // Stage config files
 ch_output_docs = file("$baseDir/docs/output.md", checkIfExists: true)
 
@@ -367,6 +344,8 @@ if (workflow.profile.contains('awsbatch')) {
     if (params.tracedir.startsWith('s3:')) exit 1, "Specify a local tracedir or run without trace! S3 cannot be used for tracefiles."
 }
 
+// # Summary ##########################################################################################
+
 // Header log info
 log.info nfcoreHeader()
 def summary = [:]
@@ -376,7 +355,7 @@ summary['Pipeline Name']      = 'nf-core/mhcquant'
 summary['Pipeline Version']   = workflow.manifest.version
 summary['Run Name']           = custom_runName ?: workflow.runName
 summary['MS Samples']         = input_mzmls_d.mix(input_raws_d)
-summary['Fasta Ref']          = params.fasta
+summary['Fasta Ref']          = params.protref
 summary['Class 1 Prediction'] = params.predict_class_1
 summary['Class 2 Prediction'] = params.predict_class_2
 summary['SubsetFDR']          = params.refine_fdr_on_predicted_subset
@@ -434,6 +413,8 @@ Channel.from(summary.collect{ [it.key, it.value] })
         </dl>
     """.stripIndent() }
     .set { ch_workflow_summary }
+
+// # Processes ########################################################################################
 
 /*
  * Parse software version numbers
@@ -541,7 +522,7 @@ process raw_file_conversion {
      set val("$id"), val("$Sample"), val("$Condition"), file("${rawfile.baseName}.mzML") into (raws_converted, raws_converted_align)
    
     when:
-     params.raw_input
+     !params.from_mzml
     
     script:
      """
@@ -615,7 +596,6 @@ process db_search_comet {
 
 }
 
-
 /*
  * STEP 3 - index decoy and target hits
  */
@@ -638,7 +618,6 @@ process index_peptides {
      """
 
 }
-
 
 /*
  * STEP 4 - calculate fdr for id based alignment
@@ -693,7 +672,10 @@ process filter_fdr_for_idalignment {
 process align_ids {
 
     input:
-     set val(id), val(Sample), val(Condition), file(id_names) from id_files_idx_fdr_filtered.groupTuple(by: 1)
+     set val(id), val(Sample), val(Condition), file(id_names) from id_files_idx_fdr_filtered
+        .join(ch_n_reps, by: 1)
+        .map { sample, id, cond, fname, n_rep -> tuple( id, groupKey(sample, n_rep), cond, fname) }
+        .groupTuple(by: 1)
 
     output:
      set val("$Sample"), file("*.trafoXML") into (id_files_trafo, id_files_trafo_II)
