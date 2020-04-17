@@ -22,15 +22,16 @@ def helpMessage() {
 
     Mandatory arguments:
       --sample_sheet [file]                     Path to sample sheet (must be surrounded with quotes)
-      --raw_input [bool]                        Specify whether raw files are used as input
-      --mzml_input [bool]                       Specify whether mzml files are used as input
       --fasta [file]                            Path to Fasta reference
       -profile [str]                            Configuration profile to use. Can use multiple (comma separated)
                                                 Available: docker, singularity, test, awsbatch and more
+    Input:
+      --from_mzml [bool]                        Input files are mzml files and not raw files
+
     Mass Spectrometry Search:
       --peptide_min_length [int]                Minimum peptide length for filtering
       --peptide_max_length [int]                Maximum peptide length for filtering
-      --precursor_mass_tolerance [int           Mass tolerance of precursor mass (ppm)
+      --precursor_mass_tolerance [int]          Mass tolerance of precursor mass (ppm)
       --fragment_mass_tolerance [int]           Mass tolerance of fragment mass bin (ppm)
       --fragment_bin_offset [int]               Offset of fragment mass bin (Comet specific parameter)
       --use_x_ions [bool]                       Use x ions for spectral matching in addition
@@ -46,7 +47,7 @@ def helpMessage() {
       --fixed_mods [str]                        Fixed modifications ('Carbamidomethyl (C)', see OpenMS modifications)
       --variable_mods [str]                     Variable modifications ('Oxidation (M)', see OpenMS modifications)
       --num_hits [int]                          Number of reported hits
-      --run_centroidisation [bool]              Specify whether mzml data is peak picked or not (true, false)
+      --run_centroidisation [bool]              Specify whether mzml data is peak picked or not
       --pick_ms_levels [int]                    The ms level used for peak picking (eg. 1, 2)
       --prec_charge [str]                       Precursor charge (eg. "2:3")
       --max_rt_alignment_shift [int]            Maximal retention time shift (sec) resulting from linear alignment      
@@ -106,7 +107,7 @@ if (params.sample_sheet)  {
 
 }
 
-if(params.mzml_input){
+if(params.from_mzml){
       ch_samples = ch_samples_from_sheet ?: { log.error "No sample sheet provided. Make sure you have used the '--sample_sheet' option."; exit 1 }()
 
 
@@ -131,16 +132,14 @@ if(params.mzml_input){
         .into{input_raws;input_raws_d}
 
 } else {
-   if (params.raw_input){
-      ch_samples = ch_samples_from_sheet ?: { log.error "No sample sheet provided. Make sure you have used the '--sample_sheet' option."; exit 1 }()
+	ch_samples = ch_samples_from_sheet ?: { log.error "No sample sheet provided. Make sure you have used the '--sample_sheet' option."; exit 1 }()
 
-      ch_samples
-           .into { input_raws; input_raws_d }
+		ch_samples
+		.into { input_raws; input_raws_d }
 
-      Channel.empty()
-        .into{input_mzmls; input_mzmls_d; input_mzmls_align; input_mzmls_unpicked; input_mzmls_align_unpicked}
+	Channel.empty()
+		.into{input_mzmls; input_mzmls_d; input_mzmls_align; input_mzmls_unpicked; input_mzmls_align_unpicked}
 
-   }
 }
 
 
@@ -541,7 +540,7 @@ process raw_file_conversion {
      set val("$id"), val("$Sample"), val("$Condition"), file("${rawfile.baseName}.mzML") into (raws_converted, raws_converted_align)
    
     when:
-     params.raw_input
+     !params.from_mzml
     
     script:
      """
